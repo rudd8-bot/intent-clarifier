@@ -38,13 +38,32 @@
       catch { return null; }
     }
 
-    const ROUND_PROMPT = (num) => `사용자의 불편함/문제 의도를 파악하는 라운드 ${num}이다.
+    // ── FIX 2: 축 라벨 정확하게 재정의 ──────────────────────────
+    const ROUND_PROMPT = (num, hadNotThis) => `사용자의 불편함/문제 의도를 파악하는 라운드 ${num}이다.
 
-${num === 1
-  ? "축: 목적(찾기/이해/결정/전달/만들기/확인) + 감정(빠르게/확실하게/완전히) + 대상(나/팀/고객)"
-  : num === 2
-  ? "축: 형식(문서/코드/대화/비교표/요약/실행계획) + 수준(개요만/깊게/바로실행) + 공유(혼자/공유)"
-  : "축: 타이밍(지금바로/나중에) + 완성도(초안이라도/완성된것) + 크기(작게시작/한번에크게)"}
+${num === 1 ? `
+축 구성:
+- 목적: 찾기 / 이해 / 결정 / 전달 / 만들기 / 확인 (무엇을 하고 싶나)
+- 속도: 빠르게 / 확실하게 / 완전히 (얼마나 급하고 철저하게)
+- 대상: 나 혼자 / 팀에게 / 고객에게 (누구를 위한 것인가)
+` : num === 2 ? `
+축 구성:
+- 형식: 문서 / 코드 / 대화 / 비교표 / 요약 / 실행계획 (어떤 형태로)
+- 깊이: 개요만 / 핵심만 / 깊게 / 바로실행 (얼마나 파고드나)
+- 공유: 혼자쓸것 / 팀공유 / 외부공유 (누가 볼 것인가)
+` : `
+축 구성:
+- 타이밍: 지금바로 / 내일 / 나중에 (언제 실행할 것인가)
+- 완성도: 초안이라도 / 완성된것 / 반복개선 (어느 수준의 결과물)
+- 크기: 한가지만 / 작게시작 / 한번에크게 (규모)
+`}
+
+${hadNotThis ? `
+⚠️ 이전 라운드에서 "이게 아닌데"가 선택됐다.
+이전에 제시한 축과 방향이 달랐다는 뜻이다.
+이번엔 이전과 완전히 다른 각도에서 선택지를 구성해라.
+이전에 쓴 단어와 표현을 재사용하지 말 것.
+` : ""}
 
 규칙:
 - 각 축마다 2~3개, 총 8~10개 선택지
@@ -54,7 +73,7 @@ ${num === 1
 
 출력: {"groups": [{"axis": "축이름", "options": ["선택지1", "선택지2"]}, ...]}`;
 
-    const REFINEMENT_PROMPT = `특정 축에서 "이게 아닌데"가 2회 반복됐다. 그 축 안을 더 세밀하게 쪼개야 한다.
+    const REFINEMENT_PROMPT = `특정 축에서 "이게 아닌데"가 반복됐다. 그 축 안을 더 세밀하게 쪼개야 한다.
 규칙: 해당 축의 하위 개념 5개로 세분화, 6자 이내, JSON만 출력
 출력: {"axis": "축이름", "options": ["세부1","세부2","세부3","세부4","세부5"]}`;
 
@@ -65,6 +84,7 @@ JSON만 출력: {"question": "질문"}`;
     const STUCK_ROUND_PROMPT = `사용자가 직접 질문에 답했다. 그 답변으로 좁은 선택지 5개를 만들어라.
 7자 이내, JSON만 출력: {"options": ["선택지1","선택지2","선택지3","선택지4","선택지5"]}`;
 
+    // ── FIX 1: 첫 문장 화자 강제 ─────────────────────────────────
     const RESULT_PROMPT = `지금까지의 선택 데이터로 의도를 분석해라.
 
 신뢰도:
@@ -75,8 +95,15 @@ JSON만 출력: {"question": "질문"}`;
 
 참고: 주관식 직접입력 항목은 사용자가 선택지에 없어서 직접 쓴 것이므로 의도 파악에 높은 가중치를 줘.
 
+firstSentence 작성 규칙 (반드시 지킬 것):
+- 사용자가 AI에게 요청하는 문장이어야 한다
+- 반드시 "~해줘", "~알려줘", "~만들어줘", "~정리해줘" 형태로 끝내야 한다
+- AI가 사용자에게 말하는 조언/안내 형태 절대 금지
+- 사용자가 그대로 복사해서 AI에 붙여넣을 수 있어야 한다
+- 예시: "회의를 줄이기 위한 팀 적용 가능한 최소 규칙 3가지를 만들어줘"
+
 출력:
-{"confidence": 1~4, "summary": "2문장 요약", "firstSentence": "AI한테 던질 첫 문장 1개, 구체적으로"}
+{"confidence": 1~4, "summary": "2문장 요약", "firstSentence": "요청형 문장"}
 JSON만 출력.`;
 
     const CONF = {
@@ -97,6 +124,7 @@ JSON만 출력.`;
       const [notThis, setNotThis] = useState(false);
       const [history, setHistory] = useState([]);
       const [axisNotThisMap, setAxisNotThisMap] = useState({});
+      const [hadNotThisLastRound, setHadNotThisLastRound] = useState(false); // FIX 3
       const [refinementAxis, setRefinementAxis] = useState(null);
       const [stuckCount, setStuckCount] = useState(0);
       const [stuckQuestion, setStuckQuestion] = useState("");
@@ -106,18 +134,13 @@ JSON만 출력.`;
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
 
-      // 주관식 추가
       const addCustom = () => {
         const val = customInput.trim();
         if (!val || customSelections.includes(val)) return;
         setCustomSelections(prev => [...prev, val]);
         setCustomInput("");
       };
-
-      const removeCustom = (val) =>
-        setCustomSelections(prev => prev.filter(v => v !== val));
-
-      // 전체 선택 = 체크박스 + 주관식
+      const removeCustom = (val) => setCustomSelections(prev => prev.filter(v => v !== val));
       const allSelected = [...selected, ...customSelections.map(v => `[직접입력] ${v}`)];
 
       const buildHistText = (hist) =>
@@ -163,7 +186,7 @@ JSON만 출력.`;
         if (!userInput.trim()) return;
         setLoading(true); setError("");
         try {
-          const text = await callClaude(ROUND_PROMPT(1), `사용자 입력: "${userInput}"`);
+          const text = await callClaude(ROUND_PROMPT(1, false), `사용자 입력: "${userInput}"`);
           const parsed = safeJson(text);
           if (!parsed?.groups) throw new Error();
           setGroups(parsed.groups);
@@ -178,21 +201,25 @@ JSON만 출력.`;
         const roundData = {
           label: stage === "refinement" ? `세밀화(${refinementAxis})` :
                  stage === "stuckRound" ? "막힘라운드" : `R${roundNum}`,
-          selected: allSelected,
-          notThis
+          selected: allSelected, notThis
         };
         const newHist = [...history, roundData];
         setHistory(newHist);
 
+        // FIX 3: 이게아닌데 1회도 즉각 반응
         let newAxisMap = { ...axisNotThisMap };
         if (notThis) {
           getSelectedAxes().forEach(ax => {
             newAxisMap[ax] = (newAxisMap[ax] || 0) + 1;
           });
           setAxisNotThisMap(newAxisMap);
+          setHadNotThisLastRound(true);
+        } else {
+          setHadNotThisLastRound(false);
         }
 
-        const needRefineAxis = Object.entries(newAxisMap).find(([, c]) => c >= 2)?.[0];
+        // 세밀화 기준: 1회로 낮춤 (기존 2회 → 1회)
+        const needRefineAxis = Object.entries(newAxisMap).find(([, c]) => c >= 1)?.[0];
 
         try {
           if (needRefineAxis && stage !== "refinement") {
@@ -210,8 +237,11 @@ JSON만 출력.`;
             await goResult(newHist);
           } else {
             const next = roundNum + 1;
-            const text = await callClaude(ROUND_PROMPT(next),
-              `원본: "${userInput}"\n이력:\n${buildHistText(newHist)}`);
+            // FIX 3: 이게아닌데 있었으면 다른 축 방향으로 프롬프트 전달
+            const text = await callClaude(
+              ROUND_PROMPT(next, notThis),
+              `원본: "${userInput}"\n이력:\n${buildHistText(newHist)}`
+            );
             const parsed = safeJson(text);
             if (!parsed?.groups) throw new Error();
             setGroups(parsed.groups);
@@ -255,17 +285,16 @@ JSON만 출력.`;
         setStage("input"); setUserInput(""); setGroups([]);
         setSelected([]); setCustomInput(""); setCustomSelections([]);
         setNotThis(false); setHistory([]); setAxisNotThisMap({});
-        setRefinementAxis(null); setStuckCount(0); setStuckQuestion("");
-        setStuckAnswer(""); setResult(null); setEditedSentence("");
-        setError(""); setRoundNum(1);
+        setHadNotThisLastRound(false); setRefinementAxis(null);
+        setStuckCount(0); setStuckQuestion(""); setStuckAnswer("");
+        setResult(null); setEditedSentence(""); setError(""); setRoundNum(1);
       };
 
       const isRoundStage = ["round", "refinement", "stuckRound"].includes(stage);
       const conf = result ? CONF[result.confidence] : null;
       const stageLabel =
         stage === "refinement" ? `세밀화 · ${refinementAxis}` :
-        stage === "stuckRound" ? "마지막 시도" :
-        `라운드 ${roundNum} / 3`;
+        stage === "stuckRound" ? "마지막 시도" : `라운드 ${roundNum} / 3`;
       const nextBtnLabel = loading ? "분석 중..." :
         (stage === "refinement" || stage === "stuckRound" || roundNum >= 3) ? "결과 보기 →" : "다음 →";
       const totalSelected = selected.length + customSelections.length;
@@ -274,7 +303,6 @@ JSON만 출력.`;
         <div style={{ minHeight: "100vh", background: "#0c0c12", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px" }}>
           <div style={{ width: "100%", maxWidth: 500 }}>
 
-            {/* Header */}
             <div style={{ marginBottom: 28 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#6ee7b7", boxShadow: "0 0 10px #6ee7b7" }} />
@@ -284,7 +312,6 @@ JSON만 출력.`;
               <p style={{ fontSize: 12, color: "#3a3a50", marginTop: 4 }}>선택으로 의도를 좁혀가는 도구</p>
             </div>
 
-            {/* INPUT */}
             {stage === "input" && (
               <div>
                 <p style={{ fontSize: 13, color: "#555", marginBottom: 10 }}>지금 상황을 편하게 써봐. 장황해도 괜찮아.</p>
@@ -299,10 +326,8 @@ JSON만 출력.`;
               </div>
             )}
 
-            {/* ROUND */}
             {isRoundStage && (
               <div>
-                {/* Progress */}
                 <div style={{ display: "flex", gap: 5, marginBottom: 18 }}>
                   {[1,2,3].map(r => (
                     <div key={r} style={{ flex: 1, height: 2, borderRadius: 2, background: r <= roundNum ? "#6ee7b7" : "#1e1e30", opacity: r < roundNum ? 0.35 : 1 }} />
@@ -318,7 +343,6 @@ JSON만 출력.`;
                   </p>
                 </div>
 
-                {/* 축별 선택지 */}
                 {groups.map((g, gi) => (
                   <div key={gi} style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", marginBottom: 7, paddingLeft: 4, borderLeft: "2px solid #252535" }}>{g.axis}</div>
@@ -335,11 +359,9 @@ JSON만 출력.`;
                   </div>
                 ))}
 
-                {/* 직접 입력 영역 */}
+                {/* 직접 입력 */}
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", marginBottom: 7, paddingLeft: 4, borderLeft: "2px solid #2a2040" }}>직접 입력</div>
-
-                  {/* 추가된 주관식 칩 */}
                   {customSelections.length > 0 && (
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                       {customSelections.map((val, i) => (
@@ -350,17 +372,11 @@ JSON만 출력.`;
                       ))}
                     </div>
                   )}
-
-                  {/* 입력창 */}
                   <div style={{ display: "flex", gap: 6 }}>
-                    <input
-                      type="text"
-                      value={customInput}
-                      onChange={e => setCustomInput(e.target.value)}
+                    <input type="text" value={customInput} onChange={e => setCustomInput(e.target.value)}
                       onKeyDown={e => e.key === "Enter" && addCustom()}
                       placeholder="선택지에 없으면 직접 써봐"
-                      style={{ flex: 1, padding: "10px 13px", background: "#14141e", border: "1.5px solid #2a2040", borderRadius: 7, color: "#c0b0f0", fontSize: 13, outline: "none" }}
-                    />
+                      style={{ flex: 1, padding: "10px 13px", background: "#14141e", border: "1.5px solid #2a2040", borderRadius: 7, color: "#c0b0f0", fontSize: 13, outline: "none" }} />
                     <button onClick={addCustom} disabled={!customInput.trim()}
                       style={{ padding: "10px 14px", background: customInput.trim() ? "#7c3aed" : "#1a1a2e", color: customInput.trim() ? "#fff" : "#333", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: customInput.trim() ? "pointer" : "not-allowed" }}>
                       추가
@@ -388,12 +404,11 @@ JSON만 출력.`;
                   </button>
                 </div>
                 <p style={{ textAlign: "center", fontSize: 11, color: "#252535", marginTop: 8 }}>
-                  {totalSelected}개 선택됨 {customSelections.length > 0 && `(직접입력 ${customSelections.length}개 포함)`}
+                  {totalSelected}개 선택됨{customSelections.length > 0 ? ` (직접입력 ${customSelections.length}개 포함)` : ""}
                 </p>
               </div>
             )}
 
-            {/* STUCK */}
             {stage === "stuck" && (
               <div>
                 <div style={{ background: "#14141e", border: "1px solid #252535", borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
@@ -411,7 +426,6 @@ JSON만 출력.`;
               </div>
             )}
 
-            {/* RESULT */}
             {stage === "result" && result && conf && (
               <div>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 13px", borderRadius: 20, background: `${conf.color}15`, border: `1px solid ${conf.color}40`, marginBottom: 18 }}>
@@ -446,7 +460,6 @@ JSON만 출력.`;
               </div>
             )}
 
-            {/* GIVEUP */}
             {stage === "giveup" && (
               <div style={{ textAlign: "center", padding: "32px 0" }}>
                 <div style={{ fontSize: 36, marginBottom: 20 }}>🤔</div>
