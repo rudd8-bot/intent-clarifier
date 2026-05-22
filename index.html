@@ -73,6 +73,8 @@ JSON만 출력: {"question": "질문"}`;
 3(방향은맞는데): 이게아닌데 2회+ or 축 분산
 4(못잡음): 패턴 없음
 
+참고: 주관식 직접입력 항목은 사용자가 선택지에 없어서 직접 쓴 것이므로 의도 파악에 높은 가중치를 줘.
+
 출력:
 {"confidence": 1~4, "summary": "2문장 요약", "firstSentence": "AI한테 던질 첫 문장 1개, 구체적으로"}
 JSON만 출력.`;
@@ -90,6 +92,8 @@ JSON만 출력.`;
       const [roundNum, setRoundNum] = useState(1);
       const [groups, setGroups] = useState([]);
       const [selected, setSelected] = useState([]);
+      const [customInput, setCustomInput] = useState("");
+      const [customSelections, setCustomSelections] = useState([]);
       const [notThis, setNotThis] = useState(false);
       const [history, setHistory] = useState([]);
       const [axisNotThisMap, setAxisNotThisMap] = useState({});
@@ -102,6 +106,20 @@ JSON만 출력.`;
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
 
+      // 주관식 추가
+      const addCustom = () => {
+        const val = customInput.trim();
+        if (!val || customSelections.includes(val)) return;
+        setCustomSelections(prev => [...prev, val]);
+        setCustomInput("");
+      };
+
+      const removeCustom = (val) =>
+        setCustomSelections(prev => prev.filter(v => v !== val));
+
+      // 전체 선택 = 체크박스 + 주관식
+      const allSelected = [...selected, ...customSelections.map(v => `[직접입력] ${v}`)];
+
       const buildHistText = (hist) =>
         hist.map(h => `${h.label}: 선택=[${h.selected.join(",")}] 이게아닌데=${h.notThis}`).join("\n");
 
@@ -111,6 +129,11 @@ JSON만 출력.`;
           if (g.options.some(o => selected.includes(o))) map[g.axis] = true;
         });
         return Object.keys(map);
+      };
+
+      const resetRound = () => {
+        setSelected([]); setNotThis(false);
+        setCustomInput(""); setCustomSelections([]);
       };
 
       const goResult = async (hist) => {
@@ -144,7 +167,7 @@ JSON만 출력.`;
           const parsed = safeJson(text);
           if (!parsed?.groups) throw new Error();
           setGroups(parsed.groups);
-          setSelected([]); setNotThis(false);
+          resetRound();
           setRoundNum(1); setStage("round");
         } catch { setError("선택지 생성 실패. 다시 시도해줘."); }
         setLoading(false);
@@ -155,7 +178,8 @@ JSON만 출력.`;
         const roundData = {
           label: stage === "refinement" ? `세밀화(${refinementAxis})` :
                  stage === "stuckRound" ? "막힘라운드" : `R${roundNum}`,
-          selected, notThis
+          selected: allSelected,
+          notThis
         };
         const newHist = [...history, roundData];
         setHistory(newHist);
@@ -178,7 +202,7 @@ JSON만 출력.`;
             if (!parsed?.options) throw new Error();
             setGroups([{ axis: parsed.axis || needRefineAxis, options: parsed.options }]);
             setRefinementAxis(needRefineAxis);
-            setSelected([]); setNotThis(false);
+            resetRound();
             setStage("refinement");
           } else if (stage === "refinement" && notThis) {
             await goStuck(newHist);
@@ -191,7 +215,7 @@ JSON만 출력.`;
             const parsed = safeJson(text);
             if (!parsed?.groups) throw new Error();
             setGroups(parsed.groups);
-            setSelected([]); setNotThis(false);
+            resetRound();
             setRoundNum(next);
             setStage("round");
           }
@@ -201,7 +225,7 @@ JSON만 출력.`;
 
       const handleDone = async () => {
         setLoading(true); setError("");
-        const roundData = { label: `R${roundNum}(조기)`, selected, notThis };
+        const roundData = { label: `R${roundNum}(조기)`, selected: allSelected, notThis };
         const newHist = [...history, roundData];
         setHistory(newHist);
         try { await goResult(newHist); }
@@ -218,7 +242,7 @@ JSON만 출력.`;
           const parsed = safeJson(text);
           if (!parsed?.options) throw new Error();
           setGroups([{ axis: "좁힌 선택지", options: parsed.options }]);
-          setSelected([]); setNotThis(false);
+          resetRound();
           setStage("stuckRound");
         } catch { setError("처리 중 오류."); }
         setLoading(false);
@@ -228,7 +252,8 @@ JSON만 출력.`;
         setSelected(prev => prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt]);
 
       const restart = () => {
-        setStage("input"); setUserInput(""); setGroups([]); setSelected([]);
+        setStage("input"); setUserInput(""); setGroups([]);
+        setSelected([]); setCustomInput(""); setCustomSelections([]);
         setNotThis(false); setHistory([]); setAxisNotThisMap({});
         setRefinementAxis(null); setStuckCount(0); setStuckQuestion("");
         setStuckAnswer(""); setResult(null); setEditedSentence("");
@@ -243,51 +268,41 @@ JSON만 출력.`;
         `라운드 ${roundNum} / 3`;
       const nextBtnLabel = loading ? "분석 중..." :
         (stage === "refinement" || stage === "stuckRound" || roundNum >= 3) ? "결과 보기 →" : "다음 →";
-
-      const S = {
-        wrap: { minHeight: "100vh", background: "#0c0c12", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px" },
-        inner: { width: "100%", maxWidth: 500 },
-        dot: { width: 7, height: 7, borderRadius: "50%", background: "#6ee7b7", boxShadow: "0 0 10px #6ee7b7" },
-        tag: { fontSize: 10, color: "#6ee7b7", letterSpacing: 3, textTransform: "uppercase" },
-        h1: { fontSize: 20, fontWeight: 700, color: "#eeeef5", margin: 0 },
-        sub: { fontSize: 12, color: "#3a3a50", marginTop: 4, marginBottom: 0 },
-        label: { fontSize: 13, color: "#555", marginBottom: 10 },
-        textarea: { width: "100%", padding: "13px 15px", background: "#181824", border: "1.5px solid #252535", borderRadius: 10, color: "#eeeef5", fontSize: 14, resize: "vertical", outline: "none", boxSizing: "border-box", lineHeight: 1.65 },
-        btn: (disabled) => ({ marginTop: 12, width: "100%", padding: "13px 0", background: disabled ? "#181824" : "#6ee7b7", color: disabled ? "#333" : "#0c0c12", border: "none", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer" }),
-        err: { color: "#f87171", fontSize: 12, marginTop: 8 },
-        axisLabel: { fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", marginBottom: 7, paddingLeft: 4, borderLeft: "2px solid #252535" },
-        optLabel: (isSel) => ({ display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", background: isSel ? "#0a2218" : "#14141e", border: `1.5px solid ${isSel ? "#6ee7b7" : "#1e1e30"}`, borderRadius: 7, cursor: "pointer", fontSize: 14, color: isSel ? "#6ee7b7" : "#9090b0", marginBottom: 5 }),
-        notThisLabel: (active) => ({ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", marginTop: 2, marginBottom: 16, background: active ? "#1a1000" : "#0e0e18", border: `1.5px solid ${active ? "#fbbf24" : "#181828"}`, borderRadius: 7, cursor: "pointer", fontSize: 13, color: active ? "#fbbf24" : "#3a3a55" }),
-      };
+      const totalSelected = selected.length + customSelections.length;
 
       return (
-        <div style={S.wrap}>
-          <div style={S.inner}>
+        <div style={{ minHeight: "100vh", background: "#0c0c12", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px" }}>
+          <div style={{ width: "100%", maxWidth: 500 }}>
+
+            {/* Header */}
             <div style={{ marginBottom: 28 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div style={S.dot} />
-                <span style={S.tag}>Intent Clarifier</span>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#6ee7b7", boxShadow: "0 0 10px #6ee7b7" }} />
+                <span style={{ fontSize: 10, color: "#6ee7b7", letterSpacing: 3, textTransform: "uppercase" }}>Intent Clarifier</span>
               </div>
-              <h1 style={S.h1}>뭘 원하는지 모를 때</h1>
-              <p style={S.sub}>선택으로 의도를 좁혀가는 도구</p>
+              <h1 style={{ fontSize: 20, fontWeight: 700, color: "#eeeef5", margin: 0 }}>뭘 원하는지 모를 때</h1>
+              <p style={{ fontSize: 12, color: "#3a3a50", marginTop: 4 }}>선택으로 의도를 좁혀가는 도구</p>
             </div>
 
+            {/* INPUT */}
             {stage === "input" && (
               <div>
-                <p style={S.label}>지금 상황을 편하게 써봐. 장황해도 괜찮아.</p>
+                <p style={{ fontSize: 13, color: "#555", marginBottom: 10 }}>지금 상황을 편하게 써봐. 장황해도 괜찮아.</p>
                 <textarea value={userInput} onChange={e => setUserInput(e.target.value)}
                   placeholder="예) 요즘 업무가 너무 많아서 뭐부터 해야할지 모르겠고..." rows={5}
-                  style={S.textarea} />
-                {error && <p style={S.err}>{error}</p>}
+                  style={{ width: "100%", padding: "13px 15px", background: "#181824", border: "1.5px solid #252535", borderRadius: 10, color: "#eeeef5", fontSize: 14, resize: "vertical", outline: "none", boxSizing: "border-box", lineHeight: 1.65 }} />
+                {error && <p style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</p>}
                 <button onClick={startRound1} disabled={loading || !userInput.trim()}
-                  style={S.btn(loading || !userInput.trim())}>
+                  style={{ marginTop: 12, width: "100%", padding: "13px 0", background: loading || !userInput.trim() ? "#181824" : "#6ee7b7", color: loading || !userInput.trim() ? "#333" : "#0c0c12", border: "none", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: loading || !userInput.trim() ? "not-allowed" : "pointer" }}>
                   {loading ? "분석 중..." : "의도 찾기 시작 →"}
                 </button>
               </div>
             )}
 
+            {/* ROUND */}
             {isRoundStage && (
               <div>
+                {/* Progress */}
                 <div style={{ display: "flex", gap: 5, marginBottom: 18 }}>
                   {[1,2,3].map(r => (
                     <div key={r} style={{ flex: 1, height: 2, borderRadius: 2, background: r <= roundNum ? "#6ee7b7" : "#1e1e30", opacity: r < roundNum ? 0.35 : 1 }} />
@@ -302,13 +317,15 @@ JSON만 출력.`;
                      roundNum === 2 ? "조금 더 좁혀볼게." : "마지막이야. 제일 가까운 걸."}
                   </p>
                 </div>
+
+                {/* 축별 선택지 */}
                 {groups.map((g, gi) => (
                   <div key={gi} style={{ marginBottom: 16 }}>
-                    <div style={S.axisLabel}>{g.axis}</div>
+                    <div style={{ fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", marginBottom: 7, paddingLeft: 4, borderLeft: "2px solid #252535" }}>{g.axis}</div>
                     {g.options.map((opt, oi) => {
                       const isSel = selected.includes(opt);
                       return (
-                        <label key={oi} style={S.optLabel(isSel)}>
+                        <label key={oi} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 13px", background: isSel ? "#0a2218" : "#14141e", border: `1.5px solid ${isSel ? "#6ee7b7" : "#1e1e30"}`, borderRadius: 7, cursor: "pointer", fontSize: 14, color: isSel ? "#6ee7b7" : "#9090b0", marginBottom: 5 }}>
                           <input type="checkbox" checked={isSel} onChange={() => toggle(opt)}
                             style={{ width: 14, height: 14, accentColor: "#6ee7b7", flexShrink: 0 }} />
                           {opt}
@@ -317,12 +334,49 @@ JSON만 출력.`;
                     })}
                   </div>
                 ))}
-                <label style={S.notThisLabel(notThis)}>
+
+                {/* 직접 입력 영역 */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", marginBottom: 7, paddingLeft: 4, borderLeft: "2px solid #2a2040" }}>직접 입력</div>
+
+                  {/* 추가된 주관식 칩 */}
+                  {customSelections.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                      {customSelections.map((val, i) => (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#1a0a2e", border: "1.5px solid #7c3aed", borderRadius: 20, fontSize: 13, color: "#a78bfa" }}>
+                          {val}
+                          <span onClick={() => removeCustom(val)} style={{ cursor: "pointer", color: "#6040a0", fontSize: 14, lineHeight: 1 }}>×</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 입력창 */}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="text"
+                      value={customInput}
+                      onChange={e => setCustomInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && addCustom()}
+                      placeholder="선택지에 없으면 직접 써봐"
+                      style={{ flex: 1, padding: "10px 13px", background: "#14141e", border: "1.5px solid #2a2040", borderRadius: 7, color: "#c0b0f0", fontSize: 13, outline: "none" }}
+                    />
+                    <button onClick={addCustom} disabled={!customInput.trim()}
+                      style={{ padding: "10px 14px", background: customInput.trim() ? "#7c3aed" : "#1a1a2e", color: customInput.trim() ? "#fff" : "#333", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 600, cursor: customInput.trim() ? "pointer" : "not-allowed" }}>
+                      추가
+                    </button>
+                  </div>
+                </div>
+
+                {/* 이게 아닌데 */}
+                <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 13px", marginBottom: 16, background: notThis ? "#1a1000" : "#0e0e18", border: `1.5px solid ${notThis ? "#fbbf24" : "#181828"}`, borderRadius: 7, cursor: "pointer", fontSize: 13, color: notThis ? "#fbbf24" : "#3a3a55" }}>
                   <input type="checkbox" checked={notThis} onChange={() => setNotThis(!notThis)}
                     style={{ width: 13, height: 13, accentColor: "#fbbf24", flexShrink: 0 }} />
                   이게 아닌데 — 방향이 좀 달라
                 </label>
-                {error && <p style={{ ...S.err, marginBottom: 10 }}>{error}</p>}
+
+                {error && <p style={{ color: "#f87171", fontSize: 12, marginBottom: 10 }}>{error}</p>}
+
                 <div style={{ display: "flex", gap: 8 }}>
                   <button onClick={handleDone} disabled={loading}
                     style={{ flex: 1, padding: "12px 0", background: "transparent", color: "#3a3a55", border: "1.5px solid #1e1e30", borderRadius: 8, fontSize: 12, cursor: loading ? "not-allowed" : "pointer" }}>
@@ -333,10 +387,13 @@ JSON만 출력.`;
                     {nextBtnLabel}
                   </button>
                 </div>
-                <p style={{ textAlign: "center", fontSize: 11, color: "#252535", marginTop: 8 }}>{selected.length}개 선택됨</p>
+                <p style={{ textAlign: "center", fontSize: 11, color: "#252535", marginTop: 8 }}>
+                  {totalSelected}개 선택됨 {customSelections.length > 0 && `(직접입력 ${customSelections.length}개 포함)`}
+                </p>
               </div>
             )}
 
+            {/* STUCK */}
             {stage === "stuck" && (
               <div>
                 <div style={{ background: "#14141e", border: "1px solid #252535", borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
@@ -345,15 +402,16 @@ JSON만 출력.`;
                 </div>
                 <textarea value={stuckAnswer} onChange={e => setStuckAnswer(e.target.value)}
                   placeholder="짧게 써봐." rows={3}
-                  style={{ ...S.textarea, resize: "none" }} />
-                {error && <p style={S.err}>{error}</p>}
+                  style={{ width: "100%", padding: "12px 14px", background: "#14141e", border: "1.5px solid #252535", borderRadius: 9, color: "#eeeef5", fontSize: 14, resize: "none", outline: "none", boxSizing: "border-box" }} />
+                {error && <p style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</p>}
                 <button onClick={handleStuckAnswer} disabled={loading || !stuckAnswer.trim()}
-                  style={S.btn(loading || !stuckAnswer.trim())}>
+                  style={{ marginTop: 10, width: "100%", padding: "13px 0", background: loading || !stuckAnswer.trim() ? "#181824" : "#6ee7b7", color: loading || !stuckAnswer.trim() ? "#333" : "#0c0c12", border: "none", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: loading || !stuckAnswer.trim() ? "not-allowed" : "pointer" }}>
                   {loading ? "분석 중..." : "이걸로 다시 →"}
                 </button>
               </div>
             )}
 
+            {/* RESULT */}
             {stage === "result" && result && conf && (
               <div>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "6px 13px", borderRadius: 20, background: `${conf.color}15`, border: `1px solid ${conf.color}40`, marginBottom: 18 }}>
@@ -369,7 +427,7 @@ JSON만 출력.`;
                     AI한테 이렇게 던져봐 <span style={{ color: "#252540", letterSpacing: 0, textTransform: "none", fontSize: 11 }}>— 고쳐도 돼</span>
                   </p>
                   <textarea value={editedSentence} onChange={e => setEditedSentence(e.target.value)} rows={3}
-                    style={{ ...S.textarea, background: "#0a2218", border: `1.5px solid ${conf.color}40`, color: "#6ee7b7", resize: "none" }} />
+                    style={{ width: "100%", padding: "12px 14px", background: "#0a2218", border: `1.5px solid ${conf.color}40`, borderRadius: 9, color: "#6ee7b7", fontSize: 14, resize: "none", outline: "none", boxSizing: "border-box", lineHeight: 1.65 }} />
                   <p style={{ fontSize: 12, color: "#3a3a55", marginTop: 6 }}>{conf.hint}</p>
                 </div>
                 <div style={{ background: "#0e0e18", borderRadius: 9, padding: "12px 14px", marginBottom: 16 }}>
@@ -388,6 +446,7 @@ JSON만 출력.`;
               </div>
             )}
 
+            {/* GIVEUP */}
             {stage === "giveup" && (
               <div style={{ textAlign: "center", padding: "32px 0" }}>
                 <div style={{ fontSize: 36, marginBottom: 20 }}>🤔</div>
@@ -402,6 +461,7 @@ JSON만 출력.`;
                 </button>
               </div>
             )}
+
           </div>
         </div>
       );
