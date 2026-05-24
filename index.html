@@ -351,8 +351,7 @@ JSON만 출력.`;
                 <textarea value={userInput}
                   onChange={e => setUserInput(e.target.value)}
                   onKeyDown={e => {
-                    const isMobile = navigator.maxTouchPoints > 0;
-                    if (!isMobile && e.key === "Enter" && !e.shiftKey) {
+                    if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       if (userInput.trim() && !loading) startRound1();
                     }
