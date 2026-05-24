@@ -16,6 +16,7 @@
   <div id="root"></div>
   <script type="text/babel">
     const { useState } = React;
+    const ACCESS_CODE = "7348";
 
     async function callClaude(system, user) {
       const res = await fetch("/api/claude", {
@@ -114,7 +115,9 @@ JSON만 출력.`;
     };
 
     function App() {
-      const [stage, setStage] = useState("input");
+      const [stage, setStage] = useState("access");
+      const [codeInput, setCodeInput] = useState("");
+      const [codeError, setCodeError] = useState(false);
       const [userInput, setUserInput] = useState("");
       const [roundNum, setRoundNum] = useState(1);
       const [groups, setGroups] = useState([]);
@@ -311,6 +314,36 @@ JSON만 출력.`;
               <h1 style={{ fontSize: 20, fontWeight: 700, color: "#eeeef5", margin: 0 }}>뭘 원하는지 모를 때</h1>
               <p style={{ fontSize: 12, color: "#3a3a50", marginTop: 4 }}>선택으로 의도를 좁혀가는 도구</p>
             </div>
+
+            {stage === "access" && (
+              <div>
+                <p style={{ fontSize: 13, color: "#555", marginBottom: 16 }}>접근 코드를 입력해줘.</p>
+                <input
+                  type="password"
+                  value={codeInput}
+                  onChange={e => { setCodeInput(e.target.value); setCodeError(false); }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      if (codeInput === ACCESS_CODE) { setStage("input"); }
+                      else { setCodeError(true); setCodeInput(""); }
+                    }
+                  }}
+                  placeholder="코드 입력 후 Enter"
+                  autoFocus
+                  style={{ width: "100%", padding: "13px 15px", background: "#181824", border: `1.5px solid ${codeError ? "#f87171" : "#252535"}`, borderRadius: 10, color: "#eeeef5", fontSize: 18, letterSpacing: 6, outline: "none", boxSizing: "border-box", textAlign: "center" }}
+                />
+                {codeError && <p style={{ color: "#f87171", fontSize: 12, marginTop: 8, textAlign: "center" }}>코드가 틀렸어.</p>}
+                <button
+                  onClick={() => {
+                    if (codeInput === ACCESS_CODE) { setStage("input"); }
+                    else { setCodeError(true); setCodeInput(""); }
+                  }}
+                  disabled={!codeInput}
+                  style={{ marginTop: 12, width: "100%", padding: "13px 0", background: codeInput ? "#6ee7b7" : "#181824", color: codeInput ? "#0c0c12" : "#333", border: "none", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: codeInput ? "pointer" : "not-allowed" }}>
+                  확인 →
+                </button>
+              </div>
+            )}
 
             {stage === "input" && (
               <div>
