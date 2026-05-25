@@ -107,6 +107,19 @@ firstSentence 작성 규칙 (반드시 지킬 것):
 {"confidence": 1~4, "summary": "2문장 요약", "firstSentence": "요청형 문장"}
 JSON만 출력.`;
 
+    // ── 레벨 감지 ──────────────────────────────────────────────────
+    const LEVEL_DETECT_PROMPT = `사용자 텍스트에서 문제 언어화 수준을 판단해라.
+Lv1: 막연함 - 동사 없거나 "모르겠어/뭔가/답답" 같은 표현
+Lv2: 문제 인식 - 문제는 있지만 원인 모름, "왜/이유가" 포함
+Lv3: 가설 있음 - "~인 것 같/~때문에" 등 원인 추정
+Lv4: 구조적 - 조건+원인+제약 다 언급됨
+Lv5: 검증 요청 - "맞나/최선인가/문제없나" 등 확인 요청
+JSON만 출력: {"level": 1}`;
+
+    const LV5_CHECK_PROMPT = `사용자가 이미 방향을 갖고 있다. 맹점 확인을 위한 질문 1개만 만들어라.
+"어떤 부분이 가장 불확실해?" 같은 형식, 20자 이내.
+JSON만 출력: {"question": "질문"}`;
+
     const CONF = {
       1: { label: "뚜렷하게 잡혔어", color: "#6ee7b7", hint: "첫 문장 바로 복사해서 써봐" },
       2: { label: "대략 잡혔어", color: "#fbbf24", hint: "첫 문장 자연스러우면 맞는 거야" },
@@ -136,6 +149,9 @@ JSON만 출력.`;
       const [editedSentence, setEditedSentence] = useState("");
       const [loading, setLoading] = useState(false);
       const [error, setError] = useState("");
+      const [inputLevel, setInputLevel] = useState(null);
+      const [lv5Question, setLv5Question] = useState("");
+      const [lv5Answer, setLv5Answer] = useState("");
 
       const addCustom = () => {
         const val = customInput.trim();
@@ -162,9 +178,9 @@ JSON만 출력.`;
         setCustomInput(""); setCustomSelections([]);
       };
 
-      const goResult = async (hist) => {
+      const goResult = async (hist, extraContext = "") => {
         const text = await callClaude(RESULT_PROMPT,
-          `원본 입력: "${userInput}"\n이력:\n${buildHistText(hist)}`);
+          `원본 입력: "${userInput}"\n이력:\n${buildHistText(hist)}${extraContext ? `\n추가 맥락: ${extraContext}` : ""}`);
         const parsed = safeJson(text);
         if (!parsed?.confidence) throw new Error("파싱 실패");
         setResult(parsed);
@@ -189,13 +205,42 @@ JSON만 출력.`;
         if (!userInput.trim()) return;
         setLoading(true); setError("");
         try {
-          const text = await callClaude(ROUND_PROMPT(1, false), `사용자 입력: "${userInput}"`);
-          const parsed = safeJson(text);
-          if (!parsed?.groups) throw new Error();
-          setGroups(parsed.groups);
-          resetRound();
-          setRoundNum(1); setStage("round");
-        } catch { setError("선택지 생성 실패. 다시 시도해줘."); }
+          // 레벨 감지
+          const lvText = await callClaude(LEVEL_DETECT_PROMPT, `텍스트: "${userInput}"`);
+          const lvParsed = safeJson(lvText);
+          const level = lvParsed?.level || 1;
+          setInputLevel(level);
+
+          if (level >= 5) {
+            // Lv5: 방향 있음, 맹점 질문 1개
+            const qText = await callClaude(LV5_CHECK_PROMPT, `입력: "${userInput}"`);
+            const qParsed = safeJson(qText);
+            if (!qParsed?.question) throw new Error();
+            setLv5Question(qParsed.question);
+            setLv5Answer("");
+            setStage("lv5check");
+          } else if (level >= 3) {
+            // Lv3-4: 바로 첫 문장 생성
+            await goResult([]);
+          } else {
+            // Lv1-2: 3라운드 선택지 진행
+            const text = await callClaude(ROUND_PROMPT(1, false), `사용자 입력: "${userInput}"`);
+            const parsed = safeJson(text);
+            if (!parsed?.groups) throw new Error();
+            setGroups(parsed.groups);
+            resetRound();
+            setRoundNum(1); setStage("round");
+          }
+        } catch { setError("분석 실패. 다시 시도해줘."); }
+        setLoading(false);
+      };
+
+      const handleLv5Answer = async () => {
+        if (!lv5Answer.trim()) return;
+        setLoading(true); setError("");
+        try {
+          await goResult([], `불확실한 부분: "${lv5Answer}"`);
+        } catch { setError("처리 중 오류."); }
         setLoading(false);
       };
 
@@ -291,6 +336,7 @@ JSON만 출력.`;
         setHadNotThisLastRound(false); setRefinementAxis(null);
         setStuckCount(0); setStuckQuestion(""); setStuckAnswer("");
         setResult(null); setEditedSentence(""); setError(""); setRoundNum(1);
+        setInputLevel(null); setLv5Question(""); setLv5Answer("");
       };
 
       const isRoundStage = ["round", "refinement", "stuckRound"].includes(stage);
@@ -351,7 +397,8 @@ JSON만 출력.`;
                 <textarea value={userInput}
                   onChange={e => setUserInput(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    const isMobile = navigator.maxTouchPoints > 0;
+                    if (!isMobile && e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
                       if (userInput.trim() && !loading) startRound1();
                     }
@@ -450,6 +497,27 @@ JSON만 출력.`;
               </div>
             )}
 
+            {stage === "lv5check" && (
+              <div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 12px", borderRadius: 20, background: "#0a1a2a", border: "1px solid #2a4a6a", marginBottom: 18 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#60b0ff" }} />
+                  <span style={{ fontSize: 12, color: "#60b0ff" }}>방향은 잡혔어 — 맹점만 확인할게</span>
+                </div>
+                <div style={{ background: "#14141e", border: "1px solid #252535", borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
+                  <p style={{ fontSize: 10, color: "#3a3a55", letterSpacing: 2, textTransform: "uppercase", margin: "0 0 8px 0" }}>확인 질문</p>
+                  <p style={{ fontSize: 16, color: "#eeeef5", margin: 0, fontWeight: 600 }}>{lv5Question}</p>
+                </div>
+                <textarea value={lv5Answer} onChange={e => setLv5Answer(e.target.value)}
+                  placeholder="짧게 써봐." rows={3}
+                  style={{ width: "100%", padding: "12px 14px", background: "#14141e", border: "1.5px solid #252535", borderRadius: 9, color: "#eeeef5", fontSize: 14, resize: "none", outline: "none", boxSizing: "border-box" }} />
+                {error && <p style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</p>}
+                <button onClick={handleLv5Answer} disabled={loading || !lv5Answer.trim()}
+                  style={{ marginTop: 10, width: "100%", padding: "13px 0", background: loading || !lv5Answer.trim() ? "#181824" : "#6ee7b7", color: loading || !lv5Answer.trim() ? "#333" : "#0c0c12", border: "none", borderRadius: 9, fontSize: 14, fontWeight: 700, cursor: loading || !lv5Answer.trim() ? "not-allowed" : "pointer" }}>
+                  {loading ? "분석 중..." : "결과 보기 →"}
+                </button>
+              </div>
+            )}
+
             {stage === "stuck" && (
               <div>
                 <div style={{ background: "#14141e", border: "1px solid #252535", borderRadius: 10, padding: "16px 18px", marginBottom: 16 }}>
@@ -485,6 +553,7 @@ JSON만 출력.`;
                     style={{ width: "100%", padding: "12px 14px", background: "#0a2218", border: `1.5px solid ${conf.color}40`, borderRadius: 9, color: "#6ee7b7", fontSize: 14, resize: "none", outline: "none", boxSizing: "border-box", lineHeight: 1.65 }} />
                   <p style={{ fontSize: 12, color: "#3a3a55", marginTop: 6 }}>{conf.hint}</p>
                 </div>
+                {history.length > 0 && (
                 <div style={{ background: "#0e0e18", borderRadius: 9, padding: "12px 14px", marginBottom: 16 }}>
                   <p style={{ fontSize: 10, color: "#252540", letterSpacing: 2, textTransform: "uppercase", margin: "0 0 8px 0" }}>선택 이력</p>
                   {history.map((h, i) => (
@@ -495,6 +564,7 @@ JSON만 출력.`;
                     </div>
                   ))}
                 </div>
+                )}
                 <button onClick={restart} style={{ width: "100%", padding: "12px 0", background: "transparent", color: "#6ee7b7", border: "1.5px solid #6ee7b7", borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   다시 시작하기
                 </button>
