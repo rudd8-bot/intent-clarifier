@@ -16,12 +16,13 @@
   <div id="root"></div>
   <script type="text/babel">
     const { useState } = React;
-    const ACCESS_CODE = "7348";
+    function getSecret() { return sessionStorage.getItem("app_secret") || ""; }
+    function saveSecret(val) { sessionStorage.setItem("app_secret", val); }
 
     async function callClaude(system, user) {
       const res = await fetch("/api/claude", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-app-secret": getSecret() },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
@@ -370,7 +371,7 @@ JSON만 출력: {"question": "질문"}`;
                   onChange={e => { setCodeInput(e.target.value); setCodeError(false); }}
                   onKeyDown={e => {
                     if (e.key === "Enter") {
-                      if (codeInput === ACCESS_CODE) { setStage("input"); }
+                      saveSecret(codeInput); setStage("input");
                       else { setCodeError(true); setCodeInput(""); }
                     }
                   }}
@@ -381,7 +382,7 @@ JSON만 출력: {"question": "질문"}`;
                 {codeError && <p style={{ color: "#f87171", fontSize: 12, marginTop: 8, textAlign: "center" }}>코드가 틀렸어.</p>}
                 <button
                   onClick={() => {
-                    if (codeInput === ACCESS_CODE) { setStage("input"); }
+                    saveSecret(codeInput); setStage("input");
                     else { setCodeError(true); setCodeInput(""); }
                   }}
                   disabled={!codeInput}
